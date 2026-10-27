@@ -1,0 +1,202 @@
+!pip -q install gradio pillow
+
+Hücre 3 / 3
+# Fotoğraf Stil Stüdyosu
+# Google Colab için: Gradio + Pillow ile çalışan basit fotoğraf düzenleme uygulaması.
+
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter, ImageDraw, ImageFont
+import gradio as gr
+import math
+import io
+
+EFFECTS = [
+    # Konum ve boyut (7)
+    "Mirror (Yatay Aynalama)",
+    "Flip (Dikey Çevirme)",
+    "90° Döndür",
+    "25° Döndür",
+    "Ortadan Kırp",
+    "Küçült",
+    "Oranı Koruyarak Küçült",
+    # Işık ve renk (10)
+    "Siyah-Beyaz",
+    "Parlaklığı Artır",
+    "Parlaklığı Azalt",
+    "Kontrastı Artır",
+    "Renkleri Canlandır",
+    "Pastel Renkler",
+    "Sepya",
+    "Solarize",
+    "Kırmızı Kanal",
+    "Renk Kanallarını Değiştir",
+    # Filtreler (9)
+    "Keskinleştir",
+    "Hafif Bulanıklaştır",
+    "Gaussian Bulanıklaştır",
+    "Kontur",
+    "Kabartma",
+    "Detay",
+    "Kenar Güçlendir",
+    "Poster",
+    "Eşikleme",
+    # Tasarım (4)
+    "Yuvarlak Köşeler",
+    "Yuvarlak Profil",
+    "Fotoğrafa Yazı Ekle",
+    "Kolaj",
+]
+
+def fit_size(image, max_side=900):
+    image = image.copy()
+    image.thumbnail((max_side, max_side))
+    return image
+
+def apply_effect(image, effect):
+    if image is None:
+        raise gr.Error("Lütfen önce bir fotoğraf yükleyin.")
+    image = ImageOps.exif_transpose(image).convert("RGB")
+    image = fit_size(image)
+
+    if effect == "Mirror (Yatay Aynalama)":
+        result = ImageOps.mirror(image)
+    elif effect == "Flip (Dikey Çevirme)":
+        result = ImageOps.flip(image)
+    elif effect == "90° Döndür":
+        result = image.rotate(90, expand=True)
+    elif effect == "25° Döndür":
+        result = image.rotate(25, expand=True, fillcolor=(245, 245, 245))
+    elif effect == "Ortadan Kırp":
+        w, h = image.size
+        side = min(w, h)
+        left, top = (w - side) // 2, (h - side) // 2
+        result = image.crop((left, top, left + side, top + side))
+    elif effect == "Küçült":
+        result = image.resize((max(1, image.width // 2), max(1, image.height // 2)))
+    elif effect == "Oranı Koruyarak Küçült":
+        result = image.copy()
+        result.thumbnail((400, 400))
+    elif effect == "Siyah-Beyaz":
+        result = ImageOps.grayscale(image).convert("RGB")
+    elif effect == "Parlaklığı Artır":
+        result = ImageEnhance.Brightness(image).enhance(1.35)
+    elif effect == "Parlaklığı Azalt":
+        result = ImageEnhance.Brightness(image).enhance(0.65)
+    elif effect == "Kontrastı Artır":
+        result = ImageEnhance.Contrast(image).enhance(1.5)
+    elif effect == "Renkleri Canlandır":
+        result = ImageEnhance.Color(image).enhance(1.7)
+    elif effect == "Pastel Renkler":
+        result = ImageEnhance.Color(ImageEnhance.Brightness(image).enhance(1.12)).enhance(0.65)
+    elif effect == "Sepya":
+        gray = ImageOps.grayscale(image)
+        result = ImageOps.colorize(gray, black="#3b2416", white="#f4dfb5").convert("RGB")
+    elif effect == "Solarize":
+        result = ImageOps.solarize(image, threshold=128)
+    elif effect == "Kırmızı Kanal":
+        r, g, b = image.split()
+        zero = Image.new("L", image.size, 0)
+        result = Image.merge("RGB", (r, zero, zero))
+    elif effect == "Renk Kanallarını Değiştir":
+        r, g, b = image.split()
+        result = Image.merge("RGB", (b, r, g))
+    elif effect == "Keskinleştir":
+        result = image.filter(ImageFilter.SHARPEN)
+    elif effect == "Hafif Bulanıklaştır":
+        result = image.filter(ImageFilter.BLUR)
+    elif effect == "Gaussian Bulanıklaştır":
+        result = image.filter(ImageFilter.GaussianBlur(radius=3))
+    elif effect == "Kontur":
+        result = image.filter(ImageFilter.CONTOUR).convert("RGB")
+    elif effect == "Kabartma":
+        result = image.filter(ImageFilter.EMBOSS).convert("RGB")
+    elif effect == "Detay":
+        result = image.filter(ImageFilter.DETAIL)
+    elif effect == "Kenar Güçlendir":
+        result = image.filter(ImageFilter.EDGE_ENHANCE_MORE)
+    elif effect == "Poster":
+        result = ImageOps.posterize(image, bits=3)
+    elif effect == "Eşikleme":
+        gray = ImageOps.grayscale(image)
+        result = gray.point(lambda p: 255 if p > 128 else 0).convert("RGB")
+    elif effect == "Yuvarlak Köşeler":
+        result = image.convert("RGBA")
+        mask = Image.new("L", result.size, 0)
+        draw = ImageDraw.Draw(mask)
+        radius = max(12, min(result.size) // 10)
+        draw.rounded_rectangle((0, 0, result.width - 1, result.height - 1),
+                               radius=radius, fill=255)
+        result.putalpha(mask)
+    elif effect == "Yuvarlak Profil":
+        side = min(image.size)
+        left, top = (image.width - side) // 2, (image.height - side) // 2
+        square = image.crop((left, top, left + side, top + side)).convert("RGBA")
+        mask = Image.new("L", (side, side), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, side - 1, side - 1), fill=255)
+        square.putalpha(mask)
+        result = square
+    elif effect == "Fotoğrafa Yazı Ekle":
+        result = image.copy()
+        draw = ImageDraw.Draw(result)
+        text = "Benim Fotoğrafım"
+        font = None
+        for font_path in ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                          "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"]:
+            try:
+                font = ImageFont.truetype(font_path, max(16, result.width // 18))
+                break
+            except OSError:
+                pass
+        if font is None:
+            font = ImageFont.load_default()
+        bbox = draw.textbbox((0, 0), text, font=font, stroke_width=2)
+        x = max(8, (result.width - (bbox[2] - bbox[0])) // 2)
+        y = max(8, result.height - (bbox[3] - bbox[1]) - 20)
+        draw.text((x, y), text, fill="white", font=font,
+                  stroke_width=2, stroke_fill="black")
+    elif effect == "Kolaj":
+        w, h = image.size
+        thumb = image.resize((max(1, w // 2), max(1, h // 2)))
+        canvas = Image.new("RGB", (thumb.width * 2, thumb.height * 2), "white")
+        canvas.paste(thumb, (0, 0))
+        canvas.paste(ImageOps.mirror(thumb), (thumb.width, 0))
+        canvas.paste(ImageOps.flip(thumb), (0, thumb.height))
+        canvas.paste(ImageOps.mirror(ImageOps.flip(thumb)), (thumb.width, thumb.height))
+        result = canvas
+    else:
+        result = image.copy()
+
+    return result
+
+def edit_photo(image, effect):
+    return apply_effect(image, effect)
+
+with gr.Blocks(theme=gr.themes.Soft(), title="Fotoğraf Stil Stüdyosu") as demo:
+    gr.Markdown(
+        """
+        # 📷 Fotoğraf Stil Stüdyosu
+        Bir fotoğraf yükle, 30 efektten birini seç ve **Uygula** düğmesine bas.
+        Yeni bir efekt seçtiğinde işlem her zaman orijinal fotoğraf üzerinde yapılır.
+        """
+    )
+    with gr.Row():
+        with gr.Column():
+            input_image = gr.Image(type="pil", label="1. Fotoğraf yükle")
+            effect_dropdown = gr.Dropdown(
+                choices=EFFECTS,
+                value="Sepya",
+                label="2. Tasarım stili",
+                info="Konum, renk, filtre ve tasarım efektlerinden birini seç."
+            )
+            apply_button = gr.Button("✨ Tasarımı Uygula", variant="primary")
+        with gr.Column():
+            output_image = gr.Image(type="pil", label="3. Düzenlenmiş fotoğraf")
+            gr.Markdown("İpucu: Farklı bir efekt denemek için listeden yeni bir seçenek seçip tekrar Uygula'ya bas.")
+
+    apply_button.click(
+        fn=edit_photo,
+        inputs=[input_image, effect_dropdown],
+        outputs=output_image
+    )
+
+if __name__ == "__main__":
+    demo.launch(share=True, debug=True)
